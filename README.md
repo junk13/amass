@@ -15,6 +15,7 @@ Amass is now an OWASP project and the [OWASP GitHub organization repository](htt
 
 ![Network graph](https://github.com/OWASP/Amass/blob/master/images/network_06092018.png "Amass Network Mapping")
 
+
 ## Community
 
 [![Chat on Discord](https://img.shields.io/discord/433729817918308352.svg?logo=discord)](https://discord.gg/rtN8GMd) 

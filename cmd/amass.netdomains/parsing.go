@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/caffix/amass/amass/utils"
+	"github.com/OWASP/Amass/amass/utils"
 )
 
 // Types that implement the flag.Value interface for parsing
