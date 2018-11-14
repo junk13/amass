@@ -138,27 +138,15 @@ func (ds *DNSService) sendResolved(req *core.AmassRequest) {
 }
 
 func (ds *DNSService) processRequests() {
-	var paused bool
-
 	for {
 		select {
 		case <-ds.PauseChan():
-			paused = true
-		case <-ds.ResumeChan():
-			paused = false
+			<-ds.ResumeChan()
 		case <-ds.Quit():
 			return
-		default:
-			if paused {
-				time.Sleep(time.Second)
-				continue
-			}
-			if req := ds.NextRequest(); req != nil {
-				core.MaxConnections.Acquire(len(InitialQueryTypes))
-				go ds.performRequest(req)
-			} else {
-				time.Sleep(100 * time.Millisecond)
-			}
+		case req := <-ds.RequestChan():
+			core.MaxConnections.Acquire(len(InitialQueryTypes))
+			go ds.performRequest(req)
 		}
 	}
 }
@@ -185,6 +173,15 @@ func (ds *DNSService) performRequest(req *core.AmassRequest) {
 
 	req.Records = answers
 	if len(req.Records) == 0 {
+		// Check if this unresolved name should be output by the enumeration
+		if ds.Config().IncludeUnresolvable && ds.Config().IsDomainInScope(req.Name) {
+			ds.bus.Publish(core.OUTPUT, &core.AmassOutput{
+				Name:   req.Name,
+				Domain: req.Domain,
+				Tag:    req.Tag,
+				Source: req.Source,
+			})
+		}
 		return
 	}
 	go ds.sendResolved(req)
@@ -382,6 +379,7 @@ func (ds *DNSService) processWildcardRequests() {
 		case <-ds.Quit():
 			return
 		case r := <-ds.wildcardRequests:
+			ds.SetActive()
 			r.WildcardType <- ds.performWildcardRequest(r.Request)
 		}
 	}
@@ -419,9 +417,10 @@ func (ds *DNSService) getWildcard(sub string) *wildcard {
 		// Query multiple times with unlikely names against this subdomain
 		set := make([][]core.DNSAnswer, numOfWildcardTests)
 		for i := 0; i < numOfWildcardTests; i++ {
+			ds.SetActive()
 			a := ds.wildcardTestResults(sub)
 			if a == nil {
-				ds.Config().Log.Printf("%s has no DNS wildcard", sub)
+				// There is no DNS wildcard
 				return entry
 			}
 			set[i] = a
@@ -438,12 +437,11 @@ func (ds *DNSService) getWildcard(sub string) *wildcard {
 		if match {
 			entry.WildcardType = WildcardTypeStatic
 			entry.Answers = set[0]
-			ds.Config().Log.Printf("%s has a static DNS wildcard: %v", sub, set[0])
+			ds.Config().Log.Printf("%s has a static DNS wildcard", sub)
 		} else {
 			entry.WildcardType = WildcardTypeDynamic
 			ds.Config().Log.Printf("%s has a dynamic DNS wildcard", sub)
 		}
-		ds.wildcards[sub] = entry
 	}
 	return entry
 }

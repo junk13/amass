@@ -6,7 +6,6 @@ package core
 import (
 	"io"
 	"log"
-	"net"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,20 +23,8 @@ type AmassConfig struct {
 	// MaxFlow is a Semaphore that restricts the number of names moving through the architecture
 	MaxFlow *utils.Semaphore
 
-	// The ASNs that the enumeration will target
-	ASNs []int
-
-	// The CIDRs that the enumeration will target
-	CIDRs []*net.IPNet
-
-	// The IPs that the enumeration will target
-	IPs []net.IP
-
 	// The ports that will be checked for certificates
 	Ports []int
-
-	// Will whois info be used to add additional domains?
-	Whois bool
 
 	// The list of words to use when generating names
 	Wordlist []string
@@ -63,12 +50,16 @@ type AmassConfig struct {
 	// Determines if zone transfers will be attempted
 	Active bool
 
+	// Determines if unresolved DNS names will be output by the enumeration
+	IncludeUnresolvable bool
+
 	// A blacklist of subdomain names that will not be investigated
 	Blacklist []string
 
 	// The writer used to save the data operations performed
 	DataOptsWriter io.Writer
 
+	// Link graph that collects all the information gathered by the enumeration
 	graph *Graph
 
 	// The root domain names that the enumeration will target
@@ -76,6 +67,9 @@ type AmassConfig struct {
 
 	// The regular expressions for the root domains added to the enumeration
 	regexps map[string]*regexp.Regexp
+
+	// The API keys used by various data sources
+	apikeys map[string]string
 }
 
 // Graph returns the Amass graph that contains all enumeration findings.
@@ -107,12 +101,13 @@ func (c *AmassConfig) DomainRegex(domain string) *regexp.Regexp {
 
 // AddDomain appends the domain name provided in the parameter to the list in the configuration.
 func (c *AmassConfig) AddDomain(domain string) {
-	c.domains = utils.UniqueAppend(c.domains, domain)
+	c.Lock()
+	defer c.Unlock()
 
+	c.domains = utils.UniqueAppend(c.domains, domain)
 	if c.regexps == nil {
 		c.regexps = make(map[string]*regexp.Regexp)
 	}
-
 	c.regexps[domain] = utils.SubdomainRegex(domain)
 }
 
@@ -158,4 +153,23 @@ func (c *AmassConfig) Blacklisted(name string) bool {
 		}
 	}
 	return resp
+}
+
+// AddAPIKey adds the data source and API key association provided to the configuration.
+func (c *AmassConfig) AddAPIKey(source, apikey string) {
+	c.Lock()
+	defer c.Unlock()
+
+	c.apikeys[source] = apikey
+}
+
+// GetAPIKey returns the API key associated with the provided data source name.
+func (c *AmassConfig) GetAPIKey(source string) string {
+	c.Lock()
+	defer c.Unlock()
+
+	if apikey, found := c.apikeys[source]; found {
+		return apikey
+	}
+	return ""
 }

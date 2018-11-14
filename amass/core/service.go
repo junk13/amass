@@ -30,8 +30,8 @@ type AmassService interface {
 	Stop() error
 	OnStop() error
 
-	NextRequest() *AmassRequest
 	SendRequest(req *AmassRequest)
+	RequestChan() <-chan *AmassRequest
 
 	IsActive() bool
 	SetActive()
@@ -57,8 +57,8 @@ type BaseAmassService struct {
 	name    string
 	started bool
 	stopped bool
-	queue   []*AmassRequest
 	active  time.Time
+	queue   chan *AmassRequest
 	pause   chan struct{}
 	resume  chan struct{}
 	quit    chan struct{}
@@ -72,8 +72,8 @@ type BaseAmassService struct {
 func NewBaseAmassService(name string, config *AmassConfig, service AmassService) *BaseAmassService {
 	return &BaseAmassService{
 		name:    name,
-		queue:   make([]*AmassRequest, 0, 50),
 		active:  time.Now(),
+		queue:   make(chan *AmassRequest, 100),
 		pause:   make(chan struct{}),
 		resume:  make(chan struct{}),
 		quit:    make(chan struct{}),
@@ -106,7 +106,12 @@ func (bas *BaseAmassService) List() string {
 
 // Pause implements the AmassService interface
 func (bas *BaseAmassService) Pause() error {
-	return bas.service.OnPause()
+	err := bas.service.OnPause()
+
+	go func() {
+		bas.pause <- struct{}{}
+	}()
+	return err
 }
 
 // OnPause implements the AmassService interface
@@ -116,7 +121,12 @@ func (bas *BaseAmassService) OnPause() error {
 
 // Resume implements the AmassService interface
 func (bas *BaseAmassService) Resume() error {
-	return bas.service.OnResume()
+	err := bas.service.OnResume()
+
+	go func() {
+		bas.resume <- struct{}{}
+	}()
+	return err
 }
 
 // OnResume implements the AmassService interface
@@ -129,6 +139,7 @@ func (bas *BaseAmassService) Stop() error {
 	if bas.isStopped() {
 		return errors.New(bas.name + " service has already been stopped")
 	}
+	bas.Resume()
 	err := bas.service.OnStop()
 	bas.stopped = true
 	close(bas.quit)
@@ -149,39 +160,24 @@ func (bas *BaseAmassService) NumOfRequests() int {
 	return len(bas.queue)
 }
 
-// NextRequest returns the first entry on the service queue or nil when the queue is empty.
-func (bas *BaseAmassService) NextRequest() *AmassRequest {
-	bas.Lock()
-	defer bas.Unlock()
-
-	if len(bas.queue) == 0 {
-		return nil
-	}
-
-	next := bas.queue[0]
-	// Remove the first slice element
-	if len(bas.queue) > 1 {
-		bas.queue = bas.queue[1:]
-	} else {
-		bas.queue = []*AmassRequest{}
-	}
-	return next
-}
-
-// SendRequest appends the entry provided by the parameter to the service queue.
+// SendRequest adds the request provided by the parameter to the service request channel.
 func (bas *BaseAmassService) SendRequest(req *AmassRequest) {
-	bas.Lock()
-	defer bas.Unlock()
-
-	bas.queue = append(bas.queue, req)
+	go func() {
+		bas.queue <- req
+	}()
 }
 
-// IsActive returns true if SetActive has been called for the service within the last 5 seconds.
+// RequestChan returns the channel that provides new service requests.
+func (bas *BaseAmassService) RequestChan() <-chan *AmassRequest {
+	return bas.queue
+}
+
+// IsActive returns true if SetActive has been called for the service within the last 10 seconds.
 func (bas *BaseAmassService) IsActive() bool {
 	bas.Lock()
 	defer bas.Unlock()
 
-	if time.Now().Sub(bas.active) > 5*time.Second {
+	if time.Now().Sub(bas.active) > 10*time.Second {
 		return false
 	}
 	return true
